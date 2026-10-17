@@ -1,0 +1,55 @@
+name: Windows refresh preview package
+
+on:
+  push:
+    branches: [build/windows-refresh-preview]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-refresh-preview
+      - run: pnpm install --frozen-lockfile
+      - name: Build standalone installer without updater signatures
+        shell: pwsh
+        run: |
+          @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json | Set-Content src-tauri/tauri.preview.conf.json -Encoding utf8
+          pnpm tauri build --bundles nsis --config src-tauri/tauri.preview.conf.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify installer in an isolated directory
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Installer was not generated' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'refresh-preview-smoke'
+          $installed = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw "Installer exited with $($installed.ExitCode)" }
+          $exe = Get-ChildItem $installDir -Filter 'apple-store-inventory-monitor.exe' -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'Installed executable was not found' }
+          $running = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($running.HasExited) { throw "Application exited early: $($running.ExitCode)" }
+          Stop-Process -Id $running.Id -Force
+          Get-FileHash $installer.FullName -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v6
+        with:
+          name: apple-store-refresh-preview-windows-x64
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7

@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows-refresh-preview
+  cancel-in-progress: true
+
 jobs:
   package:
     runs-on: windows-latest
@@ -29,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           @{ bundle = @{ createUpdaterArtifacts = $false } } | ConvertTo-Json | Set-Content src-tauri/tauri.preview.conf.json -Encoding utf8
-          pnpm tauri build --bundles nsis --config src-tauri/tauri.preview.conf.json
+          pnpm tauri build --bundles nsis --no-sign --config src-tauri/tauri.preview.conf.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify installer in an isolated directory
         shell: pwsh
